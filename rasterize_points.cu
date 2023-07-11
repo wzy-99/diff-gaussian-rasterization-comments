@@ -24,7 +24,19 @@
 #include <string>
 #include <functional>
 
-std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
+std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t)
+/**
+通过调用resizeFunctional函数并传入一个张量，可以获得一个函数对象，该对象可以根据函数调用时传入的大小参数来调整张量的大小，并返回一个指向该张量数据的指针。
+
+参数：
+
+torch::Tensor& t：一个引用类型的张量参数，用于调整其大小并返回指向其数据的指针。
+
+返回值：
+
+std::function<char*(size_t N)>：一个函数对象，接受一个size_t类型的参数N，并根据该参数调整了张量的大小，并返回指向该张量数据的char*指针。
+**/
+{
     auto lambda = [&t](size_t N) {
         t.resize_({(long long)N});
 		return reinterpret_cast<char*>(t.contiguous().data_ptr());
@@ -52,6 +64,37 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered)
+/**
+输入参数：
+
+1. `background`（torch.Tensor）- 背景图像张量，形状为 (H, W)。
+2. `means3D`（torch.Tensor）- 3D点的坐标张量，形状为 (P, 3)，其中 P 是点的数量。
+3. `colors`（torch.Tensor）- 3D点的颜色张量，形状为 (P, NUM_CHANNELS)，NUM_CHANNELS 表示颜色通道数。
+4. `opacity`（torch.Tensor）- 3D点的不透明度张量，形状为 (P, NUM_CHANNELS)。
+5. `scales`（torch.Tensor）- 3D点的缩放因子张量，形状为 (P,)。
+6. `rotations`（torch.Tensor）- 3D点的旋转角度张量，形状为 (P, 3)。
+7. `scale_modifier`（float）- 缩放因子的修改值。
+8. `cov3D_precomp`（torch.Tensor）- 预计算的3D协方差张量，形状为 (P, 9)。
+9. `viewmatrix`（torch.Tensor）- 视图变换矩阵张量，形状为 (4, 4)。
+10. `projmatrix`（torch.Tensor）- 投影矩阵张量，形状为 (4, 4)。
+11. `tan_fovx`（float）- x方向的焦距。
+12. `tan_fovy`（float）- y方向的焦距。
+13. `image_height`（int）- 图像的高度。
+14. `image_width`（int）- 图像的宽度。
+15. `sh`（torch.Tensor）- 球谐函数张量，形状为 (M, 9)。如果为空张量，则表示没有球谐函数。
+16. `degree`（int）- 球谐函数的次数。
+17. `campos`（torch.Tensor）- 相机位置张量，形状为 (3,)。
+18. `prefiltered`（bool）- 是否应用预过滤。
+
+返回的输出是一个包含以下元素的元组：
+
+1. `rendered`（int）- 渲染的点数。
+2. `out_color`（torch.Tensor）- 渲染后的颜色张量，形状为 (NUM_CHANNELS, H, W)。
+3. `radii`（torch.Tensor）- 点的半径张量，形状为 (P,)。
+4. `geomBuffer`（torch.Tensor）- 用于渲染计算的几何缓冲区张量。
+5. `binningBuffer`（torch.Tensor）- 用于渲染计算的分箱缓冲区张量。
+6. `imgBuffer`（torch.Tensor）- 用于渲染计算的图片缓冲区张量。
+**/
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
