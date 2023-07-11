@@ -72,6 +72,9 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 
 // Forward version of 2D covariance matrix computation
 __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float* cov3D, const float* viewmatrix)
+/**
+
+**/
 {
 	// The following models the steps outlined by equations 29
 	// and 31 in "EWA Splatting" (Zwicker et al., 2002). 
@@ -178,6 +181,54 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const dim3 grid,
 	uint32_t* tiles_touched,
 	bool prefiltered)
+/**
+这是一个名为`preprocessCUDA`的CUDA内核函数，用于对每个高斯点在光栅化之前执行初始处理步骤。
+
+该函数使用了一组参数来执行操作，包括：
+
+- `P`：高斯点的数量。
+- `D`：SH系数的数量。
+- `M`：SH的阶数。
+- `orig_points`：高斯点的原始坐标数组。
+- `scales`：高斯点的缩放因子数组。
+- `scale_modifier`：缩放修正因子。
+- `rotations`：高斯点的旋转数组。
+- `opacities`：高斯点的透明度数组。
+- `shs`：球谐系数数组。
+- `clamped`：指示高斯点是否被裁剪的布尔数组。
+- `cov3D_precomp`：预计算的3D协方差矩阵数组。
+- `colors_precomp`：预计算的颜色数组。
+- `viewmatrix`：视图矩阵。
+- `projmatrix`：投影矩阵。
+- `cam_pos`：摄像机位置。
+- `W`：输出屏幕的宽度。
+- `H`：输出屏幕的高度。
+- `tan_fovx`、`tan_fovy`：水平和垂直方向的视场角的正切值。
+- `focal_x`、`focal_y`：投影矩阵的焦点坐标。
+- `radii`：高斯点的半径数组。
+- `points_xy_image`：高斯点在图像空间的XY坐标数组。
+- `depths`：高斯点在视图空间的深度数组。
+- `cov3Ds`：3D协方差矩阵数组。
+- `rgb`：高斯点的颜色数组。
+- `conic_opacity`：高斯点的锥体参数和不透明度数组。
+- `grid`：线程块的网格大小。
+- `tiles_touched`：记录每个高斯点触碰到的tile数量的数组。
+- `prefiltered`：指示是否对高斯点进行预过滤的布尔值。
+
+该函数执行了对每个高斯点的初始处理步骤，包括以下操作：
+
+1. 对于每个高斯点，首先将其半径和触碰到的tile数量初始化为0。
+2. 执行近裁剪操作，检查该高斯点是否在视锥体内，如果不在，则退出处理。
+3. 通过投影变换将高斯点从3D空间转换到2D屏幕空间。
+4. 根据参数决定使用预计算的3D协方差矩阵，或者根据缩放和旋转参数计算3D协方差矩阵。
+5. 计算2D屏幕空间协方差矩阵，并进行逆运算。
+6. 使用协方差矩阵计算2D屏幕空间的范围，即高斯点所覆盖的屏幕空间矩形区域。如果范围为0，则退出处理。
+7. 如果没有预计算的颜色，根据球谐系数计算颜色，并将结果存储在rgb数组中。
+8. 存储一些有用的数据，如高斯点的深度、半径、在图像空间的坐标、锥形参数和不透明度。
+9. 记录高斯点触碰到的tile数量。
+
+这个函数对每个高斯点进行单个处理，并根据其属性和屏幕空间位置，为后续的光栅化步骤准备必要的数据。
+**/
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P)
@@ -271,97 +322,130 @@ renderCUDA(
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color)
+/**
+这是一个名为`renderCUDA`的CUDA内核函数，用于对每个像素进行光栅化和渲染操作。
+
+该函数使用了一组参数来执行操作，包括：
+
+- `CHANNELS`：颜色通道的数量。
+- `ranges`：每个线程块处理的像素ID范围的数组。
+- `point_list`：处理的高斯点的索引列表。
+- `W`、`H`：输出屏幕的宽度和高度。
+- `points_xy_image`：高斯点在图像空间的XY坐标数组。
+- `features`：高斯点的特征数组。
+- `conic_opacity`：高斯点的锥体参数和不透明度数组。
+- `final_T`：最终的T值数组。
+- `n_contrib`：每个像素的贡献者数量数组。
+- `bg_color`：背景颜色数组。
+- `out_color`：输出颜色数组。
+
+该函数实现了光栅化和渲染的主要方法，并在一个线程块中协作地处理一个tile，并且每个线程处理一个像素。函数的主要执行流程如下：
+
+1. 根据线程块的索引计算当前tile的像素范围。
+2. 检查当前线程是否与有效像素相关联，如果不是，则退出处理。
+3. 加载处理范围的起始和结束ID，并计算需要处理的高斯点数量。
+4. 分配存储批处理数据的共享存储器。
+5. 初始化辅助变量。
+6. 迭代处理批次，直到所有像素完成或处理范围完成。
+   - 如果整个线程块均标记为完成，则退出处理。
+   - 从全局内存中共同获取每个高斯点的数据到共享存储器。
+   - 迭代当前批次的每个高斯点，进行光栅化和计算渲染数据。
+   - 更新渲染数据。
+7. 所有处理有效像素的线程将最终的渲染数据写入帧和辅助缓冲区。
+
+这个函数在并行处理光栅化和渲染操作上非常高效，并使用共享存储器进行数据共享和协作计算。
+**/
 {
 	// Identify current tile and associated min/max pixel range.
-	auto block = cg::this_thread_block();
-	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
-	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
-	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
-	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
-	uint32_t pix_id = W * pix.y + pix.x;
-	float2 pixf = { (float)pix.x, (float)pix.y };
-
+	auto block = cg::this_thread_block();  // 获取当前线程块
+	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;  // 计算水平方向的线程块数量
+	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };  // 计算当前tile的最小像素坐标
+	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };  // 计算当前tile的最大像素坐标
+	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };  // 计算当前像素的坐标
+	uint32_t pix_id = W * pix.y + pix.x;  // 计算当前像素在一维数组中的索引
+	float2 pixf = { (float)pix.x, (float)pix.y };  // 当前像素的浮点坐标
+	
 	// Check if this thread is associated with a valid pixel or outside.
-	bool inside = pix.x < W&& pix.y < H;
+	bool inside = pix.x < W && pix.y < H;  // 检查当前像素是否有效（在图像范围内）
 	// Done threads can help with fetching, but don't rasterize
-	bool done = !inside;
-
+	bool done = !inside;  // 如果像素无效，则将其标记为已完成
+	
 	// Load start/end range of IDs to process in bit sorted list.
-	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
-	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
-	int toDo = range.y - range.x;
-
+	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];  // 获取当前线程块处理的像素ID范围
+	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);  // 计算需要进行处理的批次数
+	int toDo = range.y - range.x;  // 当前线程块需要处理的总像素数量
+	
 	// Allocate storage for batches of collectively fetched data.
-	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
-	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
-
+	__shared__ int collected_id[BLOCK_SIZE];  // 共享内存用于存储收集到的高斯点索引
+	__shared__ float2 collected_xy[BLOCK_SIZE];  // 共享内存用于存储收集到的高斯点XY坐标
+	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];  // 共享内存用于存储收集到的高斯点锥体参数和不透明度
+	
 	// Initialize helper variables
-	float T = 1.0f;
-	uint32_t contributor = 0;
-	uint32_t last_contributor = 0;
-	float C[CHANNELS] = { 0 };
+	float T = 1.0f;  // 初始化深度值T
+	uint32_t contributor = 0;  // 初始化贡献者计数器
+	uint32_t last_contributor = 0;  // 初始化上一个贡献者索引
+	float C[CHANNELS] = { 0 };  // 初始化颜色数组
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
+		// 如果整个块都标记为已完成光栅化操作，则结束循环。
 		// End if entire block votes that it is done rasterizing
 		int num_done = __syncthreads_count(done);
 		if (num_done == BLOCK_SIZE)
 			break;
 
+		// 从全局内存中共同获取每个高斯点的数据到共享内存。progress是根据循环和线程块内的线程索引计算出的偏移量。然后，将高斯点的索引、位置和锥体参数和不透明度存储到共享内存中。
 		// Collectively fetch per-Gaussian data from global to shared
 		int progress = i * BLOCK_SIZE + block.thread_rank();
 		if (range.x + progress < range.y)
 		{
-			int coll_id = point_list[range.x + progress];
-			collected_id[block.thread_rank()] = coll_id;
-			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
-			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			int coll_id = point_list[range.x + progress];  // 获取当前处理的高斯点索引
+			collected_id[block.thread_rank()] = coll_id;  // 存储高斯点索引到共享内存
+			collected_xy[block.thread_rank()] = points_xy_image[coll_id];  // 存储高斯点XY坐标到共享内存
+			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];  // 存储高斯点锥体参数和不透明度到共享内存
 		}
-		block.sync();
-
+		block.sync();  // 同步线程块内的线程
+	
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current position in range
 			contributor++;
-
-			// Resample using conic matrix (cf. "Surface 
-			// Splatting" by Zwicker et al., 2001)
-			float2 xy = collected_xy[j];
-			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
-			float4 con_o = collected_conic_opacity[j];
-			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+	
+			// Resample using conic matrix (cf. "Surface Splatting" by Zwicker et al., 2001)
+			float2 xy = collected_xy[j];  // 获取高斯点的XY坐标
+			float2 d = { xy.x - pixf.x, xy.y - pixf.y };  // 计算位置差矢量
+			float4 con_o = collected_conic_opacity[j];  // 获取高斯点的锥体参数和不透明度
+			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;  // 计算权重值
 			if (power > 0.0f)
 				continue;
-
+	
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp(power));  // 计算颜色的不透明度
 			if (alpha < 1.0f / 255.0f)
 				continue;
-			float test_T = T * (1 - alpha);
+			float test_T = T * (1 - alpha);  // 计算测试的深度值T
 			if (test_T < 0.0001f)
 			{
-				done = true;
+				done = true;  // 标记像素已完成处理
 				continue;
 			}
-
+	
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
-
-			T = test_T;
-
-			// Keep track of last range entry to update this
-			// pixel.
-			last_contributor = contributor;
+				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;  // 计算颜色值的加权和
+	
+			T = test_T;  // 更新深度值T
+	
+			// Keep track of last range entry to update this pixel.
+			last_contributor = contributor;  // 记录最后一个贡献者索引
 		}
 	}
-
+	
 	// All threads that treat valid pixel write out their final
 	// rendering data to the frame and auxiliary buffers.
 	if (inside)
