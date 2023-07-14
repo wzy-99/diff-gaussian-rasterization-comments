@@ -142,6 +142,24 @@ __forceinline__ __device__ bool in_frustum(int idx,
 	const float* projmatrix,
 	bool prefiltered,
 	float3& p_view)
+/**
+- idx: The index of the point to check.
+- orig_points: The original points in world space.
+- viewmatrix: The view matrix.
+- projmatrix: The projection matrix.
+- prefiltered: Whether the point is prefiltered.
+- p_view: The view space position of the point.
+
+The function first converts the point from world space to screen space using the projection matrix. 
+Then, it checks if the point is within the frustum by checking if its z-coordinate is greater than 0.2 ~~and if its x and y coordinates are within the range of -1.3 to 1.3.~~ 
+If the point is not within the frustum, the function returns false. Otherwise, it returns true.
+
+The prefiltered parameter is used to prevent a point from being filtered twice. 
+If the point is already prefiltered, then it should not be filtered again. 
+
+View matrix: The view matrix is a 4x4 matrix that is used to transform points from world space to camera space. 
+Projection matrix: The projection matrix is a 4x4 matrix that is used to transform points from camera space to screen space.
+**/
 {
 	float3 p_orig = { orig_points[3 * idx], orig_points[3 * idx + 1], orig_points[3 * idx + 2] };
 
