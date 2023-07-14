@@ -73,15 +73,31 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 // Forward version of 2D covariance matrix computation
 __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float* cov3D, const float* viewmatrix)
 /**
+mean: The mean of the distribution.
+focal_x: The focal length of the camera in the x-direction.
+focal_y: The focal length of the camera in the y-direction.
+tan_fovx: The tangent of the field of view in the x-direction.
+tan_fovy: The tangent of the field of view in the y-direction.
+cov3D: The 3D covariance matrix.
+viewmatrix: The view matrix.
 
+The function first transforms the mean of the distribution from world space to screen space. 
+Then, it computes the Jacobian matrix, which is a matrix that describes how the change in the screen space coordinates is related to the change in the world space coordinates. 
+The function then uses the Jacobian matrix to compute the 2D covariance matrix.
 **/
 {
 	// The following models the steps outlined by equations 29
 	// and 31 in "EWA Splatting" (Zwicker et al., 2002). 
 	// Additionally considers aspect / scaling of viewport.
 	// Transposes used to account for row-/column-major conventions.
+	/**
+	transforms the mean of the distribution from world space to screen space using the view matrix.
+  	**/
 	float3 t = transformPoint4x3(mean, viewmatrix);
 
+	/**
+ 	clamps the screen space coordinates of the mean to the frustum
+  	**/
 	const float limx = 1.3f * tan_fovx;
 	const float limy = 1.3f * tan_fovy;
 	const float txtz = t.x / t.z;
@@ -89,27 +105,45 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 	t.x = min(limx, max(-limx, txtz)) * t.z;
 	t.y = min(limy, max(-limy, tytz)) * t.z;
 
+	/**
+	creates the Jacobian matrix
+  	**/
 	glm::mat3 J = glm::mat3(
 		focal_x / t.z, 0.0f, -(focal_x * t.x) / (t.z * t.z),
 		0.0f, focal_y / t.z, -(focal_y * t.y) / (t.z * t.z),
 		0, 0, 0);
+	/**
+ 	he first row describes how the change in the screen space x-coordinate is related to the change in the world space x-coordinatet
+  	the second row describes how the change in the screen space y-coordinate is related to the change in the world space y-coordinate
+   	the third row is all zeros because the z-coordinate does not affect the screen space coordinates.
+ 	**/
 
+	/**
+ 	This block of code multiplies the view matrix and the Jacobian matrix. 
+ 	**/
 	glm::mat3 W = glm::mat3(
 		viewmatrix[0], viewmatrix[4], viewmatrix[8],
 		viewmatrix[1], viewmatrix[5], viewmatrix[9],
 		viewmatrix[2], viewmatrix[6], viewmatrix[10]);
-
 	glm::mat3 T = W * J;
 
+	/**
+ 	This block of code computes the 2D covariance matrix. 
+  	The 2D covariance matrix is computed by multiplying the transpose of the Jacobian matrix, the transpose of the 3D covariance matrix, and the Jacobian matrix.
+  	**/
 	glm::mat3 Vrk = glm::mat3(
 		cov3D[0], cov3D[1], cov3D[2],
 		cov3D[1], cov3D[3], cov3D[4],
 		cov3D[2], cov3D[4], cov3D[5]);
-
 	glm::mat3 cov = glm::transpose(T) * glm::transpose(Vrk) * T;
 
 	// Apply low-pass filter: every Gaussian should be at least
 	// one pixel wide/high. Discard 3rd row and column.
+	/**
+	This block of code applies a low-pass filter to the covariance matrix. 
+ 	The low-pass filter ensures that the covariance matrix is at least one pixel wide and high. 
+  	This is done to prevent the Gaussian distribution from becoming too narrow and causing artifacts.
+  	**/
 	cov[0][0] += 0.3f;
 	cov[1][1] += 0.3f;
 	return { float(cov[0][0]), float(cov[0][1]), float(cov[1][1]) };
@@ -119,6 +153,32 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 // Gaussian to a 3D covariance matrix in world space. Also takes care
 // of quaternion normalization.
 __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
+/**
+scale: The scale of the distribution.
+mod: The modulation factor.
+rot: The rotation of the distribution.
+cov3D: The 3D covariance matrix.
+
+\begin{align*}
+\text{computeCov3D}(scale, mod, rot, cov3D) &= \begin{aligned}
+&\text{Create scaling matrix} \\
+&S = \text{diag}(mod \cdot scale) \\
+&\text{Normalize quaternion to get valid rotation} \\
+&q = \frac{rot}{\left\| rot \right\|} \\
+&r = q_x, x = q_y, y = q_z, z = q_w \\
+&\text{Compute rotation matrix from quaternion} \\
+&R = \begin{pmatrix}
+1 - 2(y^2 + z^2) & 2(x \cdot y - r \cdot z) & 2(x \cdot z + r \cdot y) \\
+2(x \cdot y + r \cdot z) & 1 - 2(x^2 + z^2) & 2(y \cdot z - r \cdot x) \\
+2(x \cdot z - r \cdot y) & 2(y \cdot z + r \cdot x) & 1 - 2(x^2 + y^2)
+\end{pmatrix} \\
+&\text{Compute 3D world covariance matrix Sigma} \\
+&M = S \cdot R \\
+&\text{Covariance is symmetric, only store upper right} \\
+&cov3D = \text{diag}(M)
+\end{aligned}
+\end{align*}
+**/
 {
 	// Create scaling matrix
 	glm::mat3 S = glm::mat3(1.0f);
@@ -218,9 +278,9 @@ __global__ void preprocessCUDA(int P, int D, int M,
 该函数执行了对每个高斯点的初始处理步骤，包括以下操作：
 
 1. 对于每个高斯点，首先将其半径和触碰到的tile数量初始化为0。
-2. 执行近裁剪操作，检查该高斯点是否在视锥体内，如果不在，则退出处理。
-3. 通过投影变换将高斯点从3D空间转换到2D屏幕空间。
-4. 根据参数决定使用预计算的3D协方差矩阵，或者根据缩放和旋转参数计算3D协方差矩阵。
+2. 执行近裁剪操作，检查该高斯点是否在视锥体内，如果不在，则退出处理。具体而言，将高斯点投影到像素坐标系下，查看z值（深度）是否小于0.2。
+3. 通过投影变换将计算高斯点在2D屏幕空间的坐标。
+4. 根据放缩参数 scale 和 旋转四元数参数 q 参数计算3D协方差矩阵。
 5. 计算2D屏幕空间协方差矩阵，并进行逆运算。
 6. 使用协方差矩阵计算2D屏幕空间的范围，即高斯点所覆盖的屏幕空间矩形区域。如果范围为0，则退出处理。
 7. 如果没有预计算的颜色，根据球谐系数计算颜色，并将结果存储在rgb数组中。
@@ -252,6 +312,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters. 
+	// 从 scale 和 旋转四元数 计算 3D 高斯的协方差矩阵
 	const float* cov3D;
 	if (cov3D_precomp != nullptr)
 	{
@@ -416,7 +477,7 @@ renderCUDA(
 			// Resample using conic matrix (cf. "Surface Splatting" by Zwicker et al., 2001)
 			float2 xy = collected_xy[j];  // 获取高斯点的XY坐标
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };  // 计算位置差矢量
-			float4 con_o = collected_conic_opacity[j];  // 获取高斯点的锥体参数和不透明度
+			float4 con_o = collected_conic_opacity[j];  // 获取高斯点的锥体参数xyz和不透明度opacities
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;  // 计算权重值
 			if (power > 0.0f)
 				continue;
