@@ -531,6 +531,10 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color)
 {
+	/**
+		block 是 16 * 16 * 1
+  		grid 是 Image_height / 16, Image_width / 16, 1
+	**/
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
