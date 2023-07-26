@@ -408,6 +408,14 @@ radii：点的半径数组（可选参数，默认为nullptr）
 		binningState.point_list_keys_unsorted, binningState.point_list_keys,
 		binningState.point_list_unsorted, binningState.point_list,
 		num_rendered, 0, 32 + bit);
+	/**
+ 		对num_rendered个key/value按key排序
+
+     		key的格式是 tiledID | deepth
+
+		排序之前，同一个gaussian的所有实例相邻
+	 	因此排完序后，相同tiledID的gaussian实例相邻
+ 	*/
 
 	cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2));
 
@@ -417,6 +425,9 @@ radii：点的半径数组（可选参数，默认为nullptr）
 		binningState.point_list_keys,
 		imgState.ranges
 		);
+	/**
+ 		获得每个tile的gaussian实例范围[start index, end index]
+ 	**/
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
