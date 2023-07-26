@@ -95,6 +95,17 @@ __global__ void duplicateWithKeys(
 		// and the value is the ID of the Gaussian. Sorting the values 
 		// with this key yields Gaussian IDs in a list, such that they
 		// are first sorted by tile and then by depth. 
+		/**
+			对于每个guass
+   			会根据其覆盖的tile
+      			初始化多个实例
+
+    			对于每个实例
+       			设置一个key为 [tile的位置 |  深度]
+			设置一个value为 在P个guass中的索引
+   
+                        通过把key设置这种形式有利于按深度排序
+  		**/
 		for (int y = rect_min.y; y < rect_max.y; y++)
 		{
 			for (int x = rect_min.x; x < rect_max.x; x++)
